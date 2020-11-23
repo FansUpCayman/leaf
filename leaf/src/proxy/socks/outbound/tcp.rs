@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
 };
-
+use log::*;
 use async_trait::async_trait;
 use futures::future::TryFutureExt;
 
@@ -27,6 +27,7 @@ impl ProxyTcpHandler for Handler {
     }
 
     fn tcp_connect_addr(&self) -> Option<(String, u16, SocketAddr)> {
+        trace!("socks outbound tcp_connect_addr {} {}", self.address, self.port);
         Some((self.address.clone(), self.port, self.bind_addr))
     }
 
@@ -46,13 +47,17 @@ impl ProxyTcpHandler for Handler {
             )
             .await?
         };
+
         match &sess.destination {
             SocksAddr::Ip(a) => {
+
+                info!("socks outbound tcp connect {:?}", a);
                 let _ = async_socks5::connect(&mut stream, a.to_owned(), None)
                     .map_err(|x| Error::new(ErrorKind::Other, x))
                     .await?;
             }
             SocksAddr::Domain(domain, port) => {
+                info!("socks outbound tcp connect {}:{}", domain, port);
                 let _ =
                     async_socks5::connect(&mut stream, (domain.to_owned(), port.to_owned()), None)
                         .map_err(|x| Error::new(ErrorKind::Other, x))

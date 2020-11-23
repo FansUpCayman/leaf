@@ -27,10 +27,12 @@ pub fn new(
     let settings = protobuf::parse_from_bytes::<TUNInboundSettings>(&inbound.settings).unwrap();
 
     let cfg = if settings.fd >= 0 {
+        debug!("using fd");
         let mut cfg = tun::Configuration::default();
         cfg.raw_fd(settings.fd);
         cfg
     } else {
+        debug!("not using fd");
         let mut cfg = tun::Configuration::default();
         cfg.name(settings.name)
             .address(settings.address)
