@@ -168,12 +168,7 @@ impl HandlerManager {
                         bind_addr,
                         dns_client: dns_client.clone(),
                     });
-                    let udp = Box::new(socks::outbound::UdpHandler {
-                        address: settings.address.clone(),
-                        port: settings.port as u16,
-                        bind_addr,
-                        dns_client: dns_client.clone(),
-                    });
+                    let udp = Box::new(direct::UdpHandler::new(bind_addr));
                     let handler = proxy::Handler::new(
                         tag.clone(),
                         colored::Color::TrueColor {
