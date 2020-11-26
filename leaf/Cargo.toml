@@ -172,7 +172,7 @@ hex = { version = "0.4", optional = true }
 
 # TUN
 [target.'cfg(any(target_os = "ios", target_os = "macos", target_os = "linux"))'.dependencies]
-tun = { git = "https://github.com/eycorsican/rust-tun.git", branch = "fix", features = ["async"], optional = true }
+tun = { git = "https://github.com/FansUpCayman/rust-tun.git", branch = "macos-posix", features = ["async"], optional = true }
 
 [build-dependencies]
 cc = "1.0"

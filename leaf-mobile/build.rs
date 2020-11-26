@@ -16,7 +16,7 @@ fn main() {
             // https://github.com/rust-lang/rust-bindgen/issues/1211
             "--target=arm64-apple-ios"
         } else {
-            ""
+            "--target=x86_64-apple-darwin"
         })
         .clang_arg(if arch == "aarch64" && os == "ios" {
             // sdk path find by `xcrun --sdk iphoneos --show-sdk-path`

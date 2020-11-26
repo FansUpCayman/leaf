@@ -10,10 +10,10 @@ path = "src/main.rs"
 
 [features]
 default = [
-    "leaf/all-configs",
-    "leaf/all-endpoints",
-    "leaf/ring-aead",
-    "leaf/rustls-tls",
+    "leaf/config-conf",
+    "leaf/inbound-tun",
+    "leaf/outbound-socks",
+    "leaf/outbound-direct",
 ]
 
 [dependencies]

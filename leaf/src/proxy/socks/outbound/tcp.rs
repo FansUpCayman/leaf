@@ -47,7 +47,7 @@ impl ProxyTcpHandler for Handler {
             )
             .await?
         };
-
+        
         match &sess.destination {
             SocksAddr::Ip(a) => {
 
