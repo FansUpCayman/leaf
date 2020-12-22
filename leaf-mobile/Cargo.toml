@@ -15,7 +15,9 @@ default = [
     "leaf/config-conf",
     "leaf/inbound-tun",
     "leaf/outbound-socks",
-    "leaf/outbound-direct",
+    "leaf/ring-aead",
+    "leaf/rustls-tls",
+    "leaf/outbound-trojan"
 ]
 
 [dependencies]
