@@ -15,9 +15,11 @@ use logger::ConsoleWriter;
 
 #[no_mangle]
 pub extern "C" fn run_leaf(path: *const c_char) {
+
+    
     if let Ok(path) = unsafe { CStr::from_ptr(path).to_str() } {
         let config = leaf::config::from_file(path).expect("read config failed");
-
+        
         let loglevel = if let Some(log) = config.log.as_ref() {
             match log.level {
                 config::Log_Level::TRACE => log::LevelFilter::Trace,
@@ -32,18 +34,6 @@ pub extern "C" fn run_leaf(path: *const c_char) {
         let mut logger = leaf::common::log::setup_logger(loglevel);
         let console_output = fern::Output::writer(Box::new(ConsoleWriter(BytesMut::new())), "\n");
         logger = logger.chain(console_output);
-        if let Some(log) = config.log.as_ref() {
-            match log.output {
-                config::Log_Output::CONSOLE => {
-                    // console output already applied
-                }
-                config::Log_Output::FILE => {
-                    let f = fern::log_file(&log.output_file).expect("open log file failed");
-                    let file_output = fern::Output::file(f, "\n");
-                    logger = logger.chain(file_output);
-                }
-            }
-        }
         leaf::common::log::apply_logger(logger);
 
         let mut rt = tokio::runtime::Builder::new()

@@ -109,7 +109,7 @@ async fn tcp_dial_task(
     bind_addr: &SocketAddr,
 ) -> io::Result<(Box<dyn ProxyStream>, SocketAddr)> {
     let socket = Socket::new(Domain::ipv4(), Type::stream(), None)?;
-    socket.bind(&bind_addr.clone().into())?;
+    //socket.bind(&bind_addr.clone().into())?;
     trace!("dialing tcp {}", &dial_addr);
     match TcpStream::connect_std(socket.into_tcp_stream(), &dial_addr).await {
         Ok(stream) => {
