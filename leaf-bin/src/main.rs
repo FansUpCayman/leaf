@@ -17,6 +17,16 @@ fn get_version_string() -> String {
     }
 }
 
+#[cfg(debug_assertions)]
+fn default_thread_stack_size() -> usize {
+    2 * 1024 * 1024
+}
+
+#[cfg(not(debug_assertions))]
+fn default_thread_stack_size() -> usize {
+    128 * 1024
+}
+
 fn main() {
     let matches = App::new("leaf")
         .version(get_version_string().as_str())
@@ -29,6 +39,22 @@ fn main() {
                 .about("The configuration file")
                 .takes_value(true)
                 .default_value("config.conf"),
+        )
+        .arg(
+            Arg::new("threads")
+                .long("threads")
+                .value_name("N")
+                .about("Sets the number of runtime threads.")
+                .takes_value(true)
+                .default_value("auto"),
+        )
+        .arg(
+            Arg::new("thread-stack-size")
+                .long("thread-stack-size")
+                .value_name("BYTES")
+                .about("Sets the stack size of runtime threads.")
+                .takes_value(true)
+                .default_value(&default_thread_stack_size().to_string()),
         )
         .arg(
             Arg::new("test-outbound")
@@ -51,21 +77,39 @@ fn main() {
     };
 
     let mut rt = {
-        #[cfg(feature = "multi-thread")]
-        {
+        let threads = matches.value_of("threads").unwrap();
+        let stack_size = matches
+            .value_of("thread-stack-size")
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        if threads == "auto" {
             tokio::runtime::Builder::new()
                 .threaded_scheduler()
+                .thread_stack_size(stack_size)
                 .enable_all()
                 .build()
                 .unwrap()
-        }
-        #[cfg(not(feature = "multi-thread"))]
-        {
-            tokio::runtime::Builder::new()
-                .basic_scheduler()
-                .enable_all()
-                .build()
-                .unwrap()
+        } else if let Ok(n) = threads.parse::<usize>() {
+            if n > 1 {
+                tokio::runtime::Builder::new()
+                    .threaded_scheduler()
+                    .core_threads(n)
+                    .thread_stack_size(stack_size)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            } else {
+                tokio::runtime::Builder::new()
+                    .basic_scheduler()
+                    .thread_stack_size(stack_size)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            }
+        } else {
+            println!("invalid number of threads");
+            exit(1);
         }
     };
 

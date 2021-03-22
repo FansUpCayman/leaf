@@ -8,29 +8,17 @@ on:
 jobs:
   build-bin-cross:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         target:
           - mips-unknown-linux-musl
-          - mips-unknown-linux-gnu
-            #- mips64-unknown-linux-gnuabi64
           - mipsel-unknown-linux-musl
-          - mipsel-unknown-linux-gnu
-            #- mipsel64-unknown-linux-gnuabi64
           - x86_64-unknown-linux-musl
-          - x86_64-unknown-linux-gnu
           - i686-unknown-linux-musl
-          - i686-unknown-linux-gnu
           - aarch64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
           - arm-unknown-linux-musleabi
-          - arm-unknown-linux-gnueabi
           - armv7-unknown-linux-musleabihf
-          - armv7-unknown-linux-gnueabihf
-            #- i686-pc-windows-gnu
           - x86_64-pc-windows-gnu
-
     steps:
       - name: checkout
         uses: actions/checkout@v2
@@ -54,6 +42,7 @@ jobs:
         run: |
           export CFG_COMMIT_HASH=`git log --pretty=format:'%h' -n 1`
           export CFG_COMMIT_DATE=`git log --format="%ci" -n 1`
+          export RUSTFLAGS="-Z strip=symbols"
           ./misc/build_cross.sh ${{ matrix.target }}
 
       - name: rename and compress artifacts
@@ -87,9 +76,7 @@ jobs:
         include:
           - os: macos-latest
             target: x86_64-apple-darwin
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: checkout
         uses: actions/checkout@v2
@@ -110,6 +97,7 @@ jobs:
         run: |
           export CFG_COMMIT_HASH=`git log --pretty=format:'%h' -n 1`
           export CFG_COMMIT_DATE=`git log --format="%ci" -n 1`
+          export RUSTFLAGS="-Z strip=symbols"
           cargo build --release --target ${{ matrix.target }} -p leaf-bin
 
       - name: rename and compress artifacts
@@ -124,7 +112,6 @@ jobs:
 
   build-lib-ios:
     runs-on: macos-latest
-
     steps:
       - name: checkout
         uses: actions/checkout@v2
@@ -145,7 +132,7 @@ jobs:
 
       - name: build
         run: |
-          # OPENSSL_DIR=/tmp/openssl-ios64 cargo lipo --release -p leaf-mobile --targets aarch64-apple-ios
+          export RUSTFLAGS="-Z strip=symbols"
           make ios
 
       - name: zip artifacts
@@ -163,7 +150,6 @@ jobs:
   create-release:
     needs: [build-bin-cross, build-bin-local, build-lib-ios]
     runs-on: macos-latest
-
     steps:
       - name: checkout
         uses: actions/checkout@v2
@@ -199,24 +185,13 @@ jobs:
         target:
           - x86_64-apple-darwin
           - mips-unknown-linux-musl
-          - mips-unknown-linux-gnu
-            #- mips64-unknown-linux-gnuabi64
           - mipsel-unknown-linux-musl
-          - mipsel-unknown-linux-gnu
-            #- mipsel64-unknown-linux-gnuabi64
           - x86_64-unknown-linux-musl
-          - x86_64-unknown-linux-gnu
           - i686-unknown-linux-musl
-          - i686-unknown-linux-gnu
           - aarch64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
           - arm-unknown-linux-musleabi
-          - arm-unknown-linux-gnueabi
           - armv7-unknown-linux-musleabihf
-          - armv7-unknown-linux-gnueabihf
-            #- i686-pc-windows-gnu
           - x86_64-pc-windows-gnu
-
     steps:
       - name: download upload url
         uses: actions/download-artifact@v2
@@ -243,7 +218,7 @@ jobs:
       - name: zip artifacts
         if: ${{ matrix.target != 'x86_64-pc-windows-gnu' }}
         run: |
-          zip -9 leaf-${{ matrix.target }}.zip leaf-${{ matrix.target }}
+          gzip leaf-${{ matrix.target }}
 
       - name: zip artifacts
         if: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
@@ -251,7 +226,18 @@ jobs:
           zip -9 leaf-${{ matrix.target }}.zip leaf-${{ matrix.target }}.exe
 
       - name: upload asset
-        id: upload-release-asset
+        if: ${{ matrix.target != 'x86_64-pc-windows-gnu' }}
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ env.uploadurl }}
+          asset_path: ./leaf-${{ matrix.target }}.gz
+          asset_name: leaf-${{ matrix.target }}.gz
+          asset_content_type: application/octet-stream
+
+      - name: upload asset
+        if: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -264,7 +250,6 @@ jobs:
   release-lib:
     needs: [create-release]
     runs-on: macos-latest
-
     steps:
       - name: download upload url
         uses: actions/download-artifact@v2
@@ -286,7 +271,6 @@ jobs:
           name: libleaf-ios.zip
 
       - name: upload asset
-        id: upload-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

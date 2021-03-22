@@ -94,7 +94,7 @@ impl TcpOutboundHandler for Handler {
         if let Some(handler) = &self.tcp_handler {
             handler.handle_tcp(sess, stream).await
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, "unimplemented"))
+            Err(io::Error::new(io::ErrorKind::Other, "no TCP handler"))
         }
     }
 }
@@ -107,17 +107,20 @@ impl UdpOutboundHandler for Handler {
 
     fn udp_connect_addr(&self) -> Option<OutboundConnect> {
         if let Some(handler) = &self.udp_handler {
-            handler.udp_connect_addr()
-        } else {
-            None
+            return handler.udp_connect_addr();
+        } else if let Some(handler) = &self.tcp_handler {
+            return handler.tcp_connect_addr();
         }
+        None
     }
 
     fn udp_transport_type(&self) -> UdpTransportType {
         if let Some(handler) = &self.udp_handler {
             handler.udp_transport_type()
         } else {
-            UdpTransportType::Unknown
+            // Currently all handlers has a tcp outbound handler.
+            // FIXME
+            UdpTransportType::Stream
         }
     }
 
@@ -129,7 +132,7 @@ impl UdpOutboundHandler for Handler {
         if let Some(handler) = &self.udp_handler {
             handler.handle_udp(sess, transport).await
         } else {
-            Err(io::Error::new(io::ErrorKind::Other, "unimplemented"))
+            Err(io::Error::new(io::ErrorKind::Other, "no UDP handler"))
         }
     }
 }

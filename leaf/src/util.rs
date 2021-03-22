@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::runtime;
 
 use crate::{
     app::{
@@ -24,17 +23,6 @@ pub fn create_runners(config: Config) -> Result<Vec<Runner>> {
     Ok(runners)
 }
 
-pub fn run_with_config(config: Config) -> Result<()> {
-    let mut rt = runtime::Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
-    let runners = create_runners(config)?;
-    rt.block_on(futures::future::join_all(runners));
-    Ok(())
-}
-
 pub async fn test_outbound(tag: &str, config: &Config) {
     let outbound_manager = OutboundManager::new(&config.outbounds, config.dns.as_ref().unwrap());
     let handler = if let Some(v) = outbound_manager.get(tag) {
@@ -43,8 +31,10 @@ pub async fn test_outbound(tag: &str, config: &Config) {
         println!("outbound {} not found", tag);
         return;
     };
-    let mut sess = Session::default();
-    sess.destination = SocksAddr::Domain("www.google.com".to_string(), 80);
+    let sess = Session {
+        destination: SocksAddr::Domain("www.google.com".to_string(), 80),
+        ..Default::default()
+    };
     println!("testing outbound {}", &handler.tag());
     let start = tokio::time::Instant::now();
     match handler.handle_tcp(&sess, None).await {

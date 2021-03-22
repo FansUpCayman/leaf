@@ -1,8 +1,13 @@
 use std::io::{self, ErrorKind};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use futures::future::{self, Either};
+use futures::{
+    future::{self, Either},
+    ready, Future,
+};
 use log::*;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Semaphore;
@@ -12,9 +17,9 @@ use tokio::time::timeout;
 use colored::Colorize;
 
 use crate::{
-    // common::stream,
+    common::sniff,
     option,
-    proxy::{OutboundDatagram, ProxyHandlerType},
+    proxy::{OutboundDatagram, ProxyHandlerType, ProxyStream, SimpleProxyStream},
     session::{Session, SocksAddr},
 };
 
@@ -77,6 +82,80 @@ fn log_udp(
     }
 }
 
+pub struct Transfer<'a, R: ?Sized, W: ?Sized> {
+    reader: &'a mut R,
+    read_done: bool,
+    writer: &'a mut W,
+    pos: usize,
+    cap: usize,
+    amt: u64,
+    buf: Box<[u8]>,
+}
+
+pub fn transfer<'a, R, W>(reader: &'a mut R, writer: &'a mut W) -> Transfer<'a, R, W>
+where
+    R: AsyncRead + Unpin + ?Sized,
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    Transfer {
+        reader,
+        read_done: false,
+        writer,
+        amt: 0,
+        pos: 0,
+        cap: 0,
+        buf: vec![0; *option::LINK_BUFFER_SIZE * 1024].into_boxed_slice(),
+    }
+}
+
+impl<R, W> Future for Transfer<'_, R, W>
+where
+    R: AsyncRead + Unpin + ?Sized,
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    type Output = io::Result<u64>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        loop {
+            // If our buffer is empty, then we need to read some data to
+            // continue.
+            if self.pos == self.cap && !self.read_done {
+                let me = &mut *self;
+                let n = ready!(Pin::new(&mut *me.reader).poll_read(cx, &mut me.buf))?;
+                if n == 0 {
+                    self.read_done = true;
+                } else {
+                    self.pos = 0;
+                    self.cap = n;
+                }
+            }
+
+            // If our buffer has some data, let's write it out!
+            while self.pos < self.cap {
+                let me = &mut *self;
+                let i = ready!(Pin::new(&mut *me.writer).poll_write(cx, &me.buf[me.pos..me.cap]))?;
+                if i == 0 {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "write zero byte into writer",
+                    )));
+                } else {
+                    self.pos += i;
+                    self.amt += i as u64;
+                }
+            }
+
+            // If we've written all the data and we've seen EOF, flush out the
+            // data and finish the transfer.
+            if self.pos == self.cap && self.read_done {
+                let me = &mut *self;
+                ready!(Pin::new(&mut *me.writer).poll_flush(cx))?;
+                return Poll::Ready(Ok(self.amt));
+            }
+        }
+    }
+}
+
 pub struct Dispatcher {
     outbound_manager: OutboundManager,
     router: Router,
@@ -122,21 +201,38 @@ impl Dispatcher {
         trace!("active direct tcp connections -1: {}", pn - 1)
     }
 
-    pub async fn dispatch_tcp<T>(&self, sess: &mut Session, mut lhs: T)
+    pub async fn dispatch_tcp<T>(&self, sess: &mut Session, lhs: T)
     where
         T: 'static + AsyncRead + AsyncWrite + Unpin + Send + Sync,
     {
-        // let lhs: Box<dyn ProxyStream> =
-        //     if sess.destination.is_domain() && sess.destination.port() == 443 {
-        //         Box::new(SimpleProxyStream(lhs))
-        //     } else {
-        //         let mut lhs = stream::SniffingStream::new(lhs);
-        //         if let Some(domain) = lhs.sniff().await? {
-        //             debug!("sniffed domain {}", &domain);
-        //             sess.destination = SocksAddr::from((domain, sess.destination.port()));
-        //         }
-        //         Box::new(SimpleProxyStream(lhs))
-        //     };
+        let mut lhs: Box<dyn ProxyStream> = if !sess.destination.is_domain()
+            && (sess.destination.port() == 443 || sess.destination.port() == 80)
+        {
+            let mut lhs = sniff::SniffingStream::new(lhs);
+            match lhs.sniff().await {
+                Ok(res) => {
+                    if let Some(domain) = res {
+                        debug!(
+                            "sniffed domain {} for tcp link {} <-> {}",
+                            &domain, &sess.source, &sess.destination,
+                        );
+                        sess.destination = SocksAddr::from((domain, sess.destination.port()));
+                    }
+                }
+                Err(e) => {
+                    trace!(
+                        "sniff tcp uplink {} -> {} failed: {}",
+                        &sess.source,
+                        &sess.destination,
+                        e,
+                    );
+                    return;
+                }
+            }
+            Box::new(SimpleProxyStream(lhs))
+        } else {
+            Box::new(SimpleProxyStream(lhs))
+        };
 
         let outbound = match self.router.pick_route(&sess) {
             Ok(tag) => {
@@ -190,8 +286,8 @@ impl Dispatcher {
                     let (mut lr, mut lw) = tokio::io::split(lhs);
                     let (mut rr, mut rw) = tokio::io::split(rhs);
 
-                    let l2r = tokio::io::copy(&mut lr, &mut rw);
-                    let r2l = tokio::io::copy(&mut rr, &mut lw);
+                    let l2r = transfer(&mut lr, &mut rw);
+                    let r2l = transfer(&mut rr, &mut lw);
 
                     // Drives both uplink and downlink to completion, i.e. read till EOF.
                     match future::select(l2r, r2l).await {
@@ -211,6 +307,7 @@ impl Dispatcher {
                                     );
                                 }
                                 Err(up_e) => {
+                                    // FIXME Perhaps we should terminate the pipe immediately.
                                     debug!(
                                         "tcp uplink {} -> {} error: {} [{}]",
                                         &sess.source,
@@ -239,6 +336,10 @@ impl Dispatcher {
                             // Because uplink has been completed, no furture data from the inbound
                             // connection, we would like to close the write side of the outbound
                             // connection, so that notifies the close of the pipeline.
+                            //
+                            // TODO Perhaps we should not send FIN in order to compatible with some
+                            // of the improperly implemented server programs, e.g. a server closes
+                            // the write side after reading EOF on read side.
                             let rw_shutdown = rw.shutdown();
 
                             // Drives both the above tasks to completion simultaneously and get the

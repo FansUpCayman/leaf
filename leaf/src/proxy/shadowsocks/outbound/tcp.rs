@@ -2,14 +2,13 @@ use std::{io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 
-use super::ShadowedStream;
+use super::shadow::ShadowedStream;
 use crate::{
     app::dns_client::DnsClient,
-    proxy::{
-        stream::SimpleProxyStream, OutboundConnect, ProxyStream, TcpConnector, TcpOutboundHandler,
-    },
+    proxy::{BufHeadProxyStream, OutboundConnect, ProxyStream, TcpConnector, TcpOutboundHandler},
     session::{Session, SocksAddrWireType},
 };
+use bytes::BytesMut;
 
 pub struct Handler {
     pub address: String,
@@ -29,11 +28,15 @@ impl TcpOutboundHandler for Handler {
     }
 
     fn tcp_connect_addr(&self) -> Option<OutboundConnect> {
-        Some(OutboundConnect::Proxy(
-            self.address.clone(),
-            self.port,
-            self.bind_addr,
-        ))
+        if !self.address.is_empty() && self.port != 0 {
+            Some(OutboundConnect::Proxy(
+                self.address.clone(),
+                self.port,
+                self.bind_addr,
+            ))
+        } else {
+            None
+        }
     }
 
     async fn handle_tcp<'a>(
@@ -52,16 +55,19 @@ impl TcpOutboundHandler for Handler {
             )
             .await?
         };
-        let mut stream =
-            ShadowedStream::new(stream, &self.cipher, &self.password).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("create shadowsocks stream failed: {}", e),
-                )
-            })?;
+        let stream = ShadowedStream::new(stream, &self.cipher, &self.password).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("create shadowsocks stream failed: {}", e),
+            )
+        })?;
+        let mut buf = BytesMut::new();
         sess.destination
-            .write_to(&mut stream, SocksAddrWireType::PortLast)
-            .await?;
-        Ok(Box::new(SimpleProxyStream(stream)))
+            .write_buf(&mut buf, SocksAddrWireType::PortLast)?;
+        // FIXME receive-only conns
+        Ok(Box::new(BufHeadProxyStream {
+            inner: stream,
+            head: Some(buf),
+        }))
     }
 }

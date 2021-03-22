@@ -3,6 +3,7 @@ use std::{io, net::SocketAddr};
 
 use async_trait::async_trait;
 use futures::future::select_ok;
+use futures::stream::Stream;
 use futures::TryFutureExt;
 use log::*;
 use socket2::{Domain, Socket, Type};
@@ -13,7 +14,7 @@ use crate::{
     app::dns_client::DnsClient,
     common::resolver::Resolver,
     option,
-    session::{Session, SocksAddr},
+    session::{DatagramSource, Session, SocksAddr},
 };
 
 pub mod datagram;
@@ -21,50 +22,49 @@ pub mod inbound;
 pub mod outbound;
 pub mod stream;
 
+#[cfg(any(feature = "inbound-amux", feature = "outbound-amux"))]
+pub mod amux;
+#[cfg(any(feature = "inbound-chain", feature = "outbound-chain"))]
+pub mod chain;
+#[cfg(feature = "outbound-direct")]
+pub mod direct;
+#[cfg(feature = "outbound-drop")]
+pub mod drop;
+#[cfg(feature = "outbound-failover")]
+pub mod failover;
+#[cfg(feature = "outbound-h2")]
+pub mod h2;
 #[cfg(feature = "inbound-http")]
 pub mod http;
+#[cfg(feature = "outbound-random")]
+pub mod random;
+#[cfg(feature = "outbound-redirect")]
+pub mod redirect;
+#[cfg(feature = "outbound-retry")]
+pub mod retry;
+#[cfg(any(feature = "inbound-shadowsocks", feature = "outbound-shadowsocks"))]
+pub mod shadowsocks;
+#[cfg(any(feature = "inbound-socks", feature = "outbound-socks"))]
+pub mod socks;
+#[cfg(feature = "outbound-stat")]
+pub mod stat;
+#[cfg(feature = "outbound-tls")]
+pub mod tls;
+#[cfg(any(feature = "inbound-trojan", feature = "outbound-trojan"))]
+pub mod trojan;
+#[cfg(feature = "outbound-tryall")]
+pub mod tryall;
 #[cfg(all(
     feature = "inbound-tun",
     any(target_os = "ios", target_os = "macos", target_os = "linux")
 ))]
 pub mod tun;
-
-#[cfg(feature = "outbound-direct")]
-pub mod direct;
-#[cfg(feature = "outbound-drop")]
-pub mod drop;
-#[cfg(feature = "outbound-h2")]
-pub mod h2;
-#[cfg(feature = "outbound-redirect")]
-pub mod redirect;
-#[cfg(feature = "outbound-shadowsocks")]
-pub mod shadowsocks;
-#[cfg(any(feature = "inbound-socks", feature = "outbound-socks"))]
-pub mod socks;
-#[cfg(feature = "outbound-tls")]
-pub mod tls;
-#[cfg(any(feature = "inbound-trojan", feature = "outbound-trojan"))]
-pub mod trojan;
 #[cfg(feature = "outbound-vless")]
 pub mod vless;
 #[cfg(feature = "outbound-vmess")]
 pub mod vmess;
 #[cfg(any(feature = "inbound-ws", feature = "outbound-ws"))]
 pub mod ws;
-
-#[cfg(any(feature = "inbound-chain", feature = "outbound-chain"))]
-pub mod chain;
-#[cfg(feature = "outbound-failover")]
-pub mod failover;
-#[cfg(feature = "outbound-random")]
-pub mod random;
-#[cfg(feature = "outbound-retry")]
-pub mod retry;
-#[cfg(feature = "outbound-tryall")]
-pub mod tryall;
-
-#[cfg(feature = "outbound-stat")]
-pub mod stat;
 
 pub use datagram::{
     SimpleInboundDatagram, SimpleInboundDatagramRecvHalf, SimpleInboundDatagramSendHalf,
@@ -79,7 +79,7 @@ pub enum ProxyHandlerType {
     Ensemble,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum UdpTransportType {
     Stream,
     Packet,
@@ -124,7 +124,7 @@ async fn tcp_dial_task(
 }
 
 // Dials a TCP stream.
-async fn dial_tcp_stream(
+pub async fn dial_tcp_stream(
     dns_client: Arc<DnsClient>,
     bind_addr: &SocketAddr,
     address: &str,
@@ -145,7 +145,7 @@ async fn dial_tcp_stream(
 
     while !done {
         let mut tasks = Vec::new();
-        for _ in 0..option::OUTBOUND_DIAL_CONCURRENCY {
+        for _ in 0..*option::OUTBOUND_DIAL_CONCURRENCY {
             let dial_addr = match resolver.next() {
                 Some(a) => a,
                 None => {
@@ -217,9 +217,11 @@ pub trait OutboundHandler:
     fn has_udp(&self) -> bool;
 }
 
+#[derive(Debug)]
 pub enum OutboundConnect {
     Proxy(String, u16, SocketAddr),
     Direct(SocketAddr),
+    NoConnect,
 }
 
 /// An outbound handler for outgoing TCP conections.
@@ -315,16 +317,19 @@ pub trait InboundHandler: Tag + TcpInboundHandler + UdpInboundHandler + Send + U
 pub trait TcpInboundHandler: Send + Sync + Unpin {
     async fn handle_tcp<'a>(
         &'a self,
-        transport: InboundTransport,
+        sess: Session,
+        stream: Box<dyn ProxyStream>,
     ) -> std::io::Result<InboundTransport>;
 }
 
 /// An inbound handler for incoming UDP connections.
 #[async_trait]
 pub trait UdpInboundHandler: Send + Sync + Unpin {
+    // TODO Returns an InboundTransport to support UDP-based reliable transports
+    // such as QUIC.
     async fn handle_udp<'a>(
         &'a self,
-        socket: Option<Box<dyn InboundDatagram>>,
+        socket: Box<dyn InboundDatagram>,
     ) -> io::Result<Box<dyn InboundDatagram>>;
 }
 
@@ -343,7 +348,7 @@ pub trait InboundDatagram: Send + Unpin {
 #[async_trait]
 pub trait InboundDatagramRecvHalf: Sync + Send + Unpin {
     /// Receives a single datagram message on the socket. On success, returns
-    /// the number of bytes read, the source address where this message
+    /// the number of bytes read, the source where this message
     /// originated and the destination this message shall be sent to.
     ///
     /// This should be implemented by a proxy inbound handler, the destination
@@ -352,7 +357,7 @@ pub trait InboundDatagramRecvHalf: Sync + Send + Unpin {
     async fn recv_from(
         &mut self,
         buf: &mut [u8],
-    ) -> io::Result<(usize, SocketAddr, Option<SocksAddr>)>;
+    ) -> io::Result<(usize, DatagramSource, Option<SocksAddr>)>;
 }
 
 /// The send half.
@@ -373,12 +378,24 @@ pub trait InboundDatagramSendHalf: Sync + Send + Unpin {
     ) -> io::Result<usize>;
 }
 
+pub enum SingleInboundTransport {
+    /// The reliable transport.
+    Stream(Box<dyn ProxyStream>, Session),
+    /// The unreliable transport.
+    Datagram(Box<dyn InboundDatagram>),
+    /// None.
+    Empty,
+}
+
+pub type IncomingTransport = Box<dyn Stream<Item = SingleInboundTransport> + Sync + Send + Unpin>;
+
 /// An inbound transport represents either a reliable or unreliable transport.
 pub enum InboundTransport {
     /// The reliable transport.
     Stream(Box<dyn ProxyStream>, Session),
     /// The unreliable transport.
     Datagram(Box<dyn InboundDatagram>),
+    Incoming(IncomingTransport),
     /// None.
     Empty,
 }

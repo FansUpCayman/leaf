@@ -8,9 +8,32 @@ use std::{
 use byteorder::{BigEndian, ByteOrder};
 use bytes::BufMut;
 use log::*;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
-// TODO use references
+pub type StreamId = u16;
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
+pub struct DatagramSource {
+    pub address: SocketAddr,
+    pub stream_id: Option<StreamId>,
+}
+
+impl DatagramSource {
+    pub fn new(address: SocketAddr, stream_id: Option<StreamId>) -> Self {
+        DatagramSource { address, stream_id }
+    }
+}
+
+impl std::fmt::Display for DatagramSource {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(id) = self.stream_id.as_ref() {
+            write!(f, "{}(stream-{})", self.address, id)
+        } else {
+            write!(f, "{}", self.address)
+        }
+    }
+}
+
 pub struct Session {
     /// The socket address of the remote peer of an inbound connection.
     pub source: SocketAddr,
@@ -20,6 +43,8 @@ pub struct Session {
     pub destination: SocksAddr,
     /// The tag of the inbound handler this session initiated.
     pub inbound_tag: String,
+    /// Optional stream ID for multiplexing transports.
+    pub stream_id: Option<StreamId>,
 }
 
 impl Clone for Session {
@@ -29,6 +54,7 @@ impl Clone for Session {
             local_addr: self.local_addr,
             destination: self.destination.clone(),
             inbound_tag: self.inbound_tag.clone(),
+            stream_id: self.stream_id,
         }
     }
 }
@@ -40,6 +66,7 @@ impl Default for Session {
             local_addr: "0.0.0.0:0".parse().unwrap(),
             destination: SocksAddr::empty_ipv4(),
             inbound_tag: "".to_string(),
+            stream_id: None,
         }
     }
 }
@@ -65,7 +92,7 @@ pub enum SocksAddrWireType {
     PortLast,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum SocksAddr {
     Ip(SocketAddr),
     Domain(String, u16),
@@ -247,57 +274,6 @@ impl SocksAddr {
                 _ => Err(invalid_addr_type()),
             },
         }
-    }
-
-    /// Writes `self` with `writer`.
-    pub async fn write_to<T: AsyncWrite + Unpin>(
-        &self,
-        w: &mut T,
-        addr_type: SocksAddrWireType,
-    ) -> io::Result<()> {
-        match self {
-            Self::Ip(addr) => match addr {
-                SocketAddr::V4(addr) => match addr_type {
-                    SocksAddrWireType::PortLast => {
-                        w.write_u8(SocksAddrPortLastType::V4).await?;
-                        w.write_all(&addr.ip().octets()).await?;
-                        w.write_u16(addr.port()).await?;
-                    }
-                    SocksAddrWireType::PortFirst => {
-                        w.write_u16(addr.port()).await?;
-                        w.write_u8(SocksAddrPortFirstType::V4).await?;
-                        w.write_all(&addr.ip().octets()).await?;
-                    }
-                },
-                SocketAddr::V6(addr) => match addr_type {
-                    SocksAddrWireType::PortLast => {
-                        w.write_u8(SocksAddrPortLastType::V6).await?;
-                        w.write_all(&addr.ip().octets()).await?;
-                        w.write_u16(addr.port()).await?;
-                    }
-                    SocksAddrWireType::PortFirst => {
-                        w.write_u16(addr.port()).await?;
-                        w.write_u8(SocksAddrPortFirstType::V6).await?;
-                        w.write_all(&addr.ip().octets()).await?;
-                    }
-                },
-            },
-            Self::Domain(domain, port) => match addr_type {
-                SocksAddrWireType::PortLast => {
-                    w.write_u8(SocksAddrPortLastType::DOMAIN).await?;
-                    w.write_u8(domain.len() as u8).await?;
-                    w.write_all(domain.as_bytes()).await?;
-                    w.write_u16(port.to_owned()).await?;
-                }
-                SocksAddrWireType::PortFirst => {
-                    w.write_u16(port.to_owned()).await?;
-                    w.write_u8(SocksAddrPortFirstType::DOMAIN).await?;
-                    w.write_u8(domain.len() as u8).await?;
-                    w.write_all(domain.as_bytes()).await?;
-                }
-            },
-        }
-        Ok(())
     }
 }
 

@@ -25,21 +25,24 @@ all-configs = [
 all-endpoints = [
     # inbounds
     "inbound-chain",
+    "inbound-amux",
     "inbound-ws",
     "inbound-trojan",
     "inbound-http",
+    "inbound-shadowsocks",
     "inbound-socks",
     "inbound-tun",
     # outbounds
     "outbound-direct",
     "outbound-drop",
-    # "outbound-redirect",
+    "outbound-redirect",
     "outbound-shadowsocks",
     "outbound-socks",
     "outbound-trojan",
     "outbound-vmess",
     "outbound-tls",
     "outbound-ws",
+    "outbound-amux",
     # "outbound-vless",
     "outbound-h2",
     "outbound-failover",
@@ -80,13 +83,16 @@ outbound-tryall = []
 outbound-chain = []
 outbound-retry = []
 outbound-stat = ["warp"]
+outbound-amux= []
 
 # Inbounds
 inbound-trojan = ["sha2", "hex"]
+inbound-shadowsocks = ["hkdf", "sha-1", "md-5"]
 inbound-socks = []
 inbound-http = ["hyper"]
 inbound-tun = ["tun"]
 inbound-ws = ["tungstenite", "tokio-tungstenite", "url", "http"]
+inbound-amux = []
 inbound-chain = []
 
 [dependencies]
@@ -149,7 +155,7 @@ tokio-tungstenite = { version = "0.11", optional = true }
 url = { version = "2.1", optional = true }
 
 # HTTP inbound
-hyper = { version = "0.13", default-features = false, features = [], optional = true }
+hyper = { version = "0.13.9", default-features = false, features = [], optional = true }
 
 # HTTP/2
 h2 = { version = "0.2.6", features = ["stream"], optional = true }

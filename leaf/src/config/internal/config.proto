@@ -1,8 +1,13 @@
 syntax = "proto3";
 
-message DNS {
+message Dns {
+	message Ips {
+		repeated string values = 1;
+	}
+
 	repeated string servers = 1;
 	string bind = 2;
+	map<string, Ips> hosts = 3;
 }
 
 message Log {
@@ -24,7 +29,7 @@ message Log {
 	string output_file = 3;
 }
 
-message TUNInboundSettings {
+message TunInboundSettings {
 	int32 fd = 1;
 	string name = 2;
 	string address = 3;
@@ -35,12 +40,21 @@ message TUNInboundSettings {
 	repeated string fake_dns_include = 8;
 }
 
+message ShadowsocksInboundSettings {
+	string method = 1;
+	string password = 2;
+}
+
 message TrojanInboundSettings {
 	string password = 3;
 }
 
 message WebSocketInboundSettings {
 	string path = 1;
+}
+
+message AMuxInboundSettings {
+	repeated string actors = 1;
 }
 
 message ChainInboundSettings {
@@ -106,6 +120,7 @@ message HTTP2OutboundSettings {
 	string host = 2;
 }
 
+
 message TryAllOutboundSettings {
 	repeated string actors = 1;
 	uint32 delay_base = 2;
@@ -113,6 +128,14 @@ message TryAllOutboundSettings {
 
 message RandomOutboundSettings {
 	repeated string actors = 1;
+}
+
+message AMuxOutboundSettings {
+	string address = 1;
+	uint32 port = 2;
+	repeated string actors = 3;
+	uint32 max_accepts = 4;
+	uint32 concurrency = 5;
 }
 
 message ChainOutboundSettings {
@@ -178,5 +201,5 @@ message Config {
 	repeated Inbound inbounds = 2;
 	repeated Outbound outbounds = 3;
 	repeated RoutingRule routing_rules = 4;
-	DNS dns = 5;
+	Dns dns = 5;
 }
