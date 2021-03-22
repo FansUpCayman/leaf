@@ -13,7 +13,19 @@ crate-type = ["staticlib"]
 [features]
 default = [
     "leaf/all-configs",
-    "leaf/all-endpoints",
+    "leaf/inbound-tun",
+    "leaf/outbound-direct",
+    "leaf/outbound-drop",
+    "leaf/outbound-redirect",
+    "leaf/outbound-socks",
+    "leaf/outbound-trojan",
+    "leaf/outbound-tls",
+    "leaf/outbound-amux",
+    "leaf/outbound-h2",
+    "leaf/outbound-failover",
+    "leaf/outbound-tryall",
+    "leaf/outbound-chain",
+    "leaf/outbound-retry",
     "leaf/ring-aead",
     "leaf/rustls-tls",
 ]
